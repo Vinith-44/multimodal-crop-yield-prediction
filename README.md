@@ -1,192 +1,227 @@
-# 🌾 Multimodal Paddy Yield Prediction — Kharif Season
+<div align="center">
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.8%2B-3776AB?style=for-the-badge&logo=python&logoColor=white"/>
-  <img src="https://img.shields.io/badge/PyTorch-Deep%20Learning-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white"/>
-  <img src="https://img.shields.io/badge/Sentinel--2-Satellite%20Imagery-4CAF50?style=for-the-badge"/>
-  <img src="https://img.shields.io/badge/Rasterio-Geospatial-2E7D32?style=for-the-badge"/>
-  <img src="https://img.shields.io/badge/Scikit--Learn-Preprocessing-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white"/>
-</p>
+# Multimodal Paddy Yield Prediction
 
-<p align="center">
-  A custom dual-arm deep learning system that fuses <strong>Sentinel-2 satellite imagery</strong> with <strong>district-level agricultural metadata</strong> to predict Kharif paddy yield (Tonnes/Ha) across 26 districts of Andhra Pradesh, India.
-</p>
+### Kharif Season · Andhra Pradesh · 26 Districts
+
+<br/>
+
+[![Python](https://img.shields.io/badge/Python-3.11-blue?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org)
+[![Sentinel-2](https://img.shields.io/badge/Sentinel--2-ESA-4CAF50?style=flat-square)](https://sentinel.esa.int)
+[![Rasterio](https://img.shields.io/badge/Rasterio-Geospatial-2E7D32?style=flat-square)](https://rasterio.readthedocs.io)
+[![scikit-learn](https://img.shields.io/badge/scikit--learn-Preprocessing-F7931E?style=flat-square&logo=scikit-learn&logoColor=white)](https://scikit-learn.org)
+[![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
+
+<br/>
+
+> A custom **dual-arm deep learning system** that fuses **Sentinel-2 satellite imagery**
+> with **district-level agricultural metadata** to predict Kharif paddy yield
+> across 26 districts of Andhra Pradesh, India.
+
+<br/>
+
+[Overview](#-overview) · [Architecture](#-architecture) · [Dataset](#-dataset) · [Results](#-results) · [Quickstart](#-quickstart) · [Challenges](#-engineering-challenges)
+
+</div>
 
 ---
 
-## 📌 Overview
+## Overview
 
-Standard yield models pick one data type — either satellite images or field statistics. This project does both.
+Most yield prediction models use either satellite images or tabular statistics — not both.
 
-**StanfordModel** is a custom PyTorch architecture with two parallel feature extraction arms:
-- A **CNN arm** that reads 5-band `.tif` satellite images and extracts spatial crop-health patterns
-- An **ANN arm** that reads tabular district metadata (rainfall, sown area, groundwater, coordinates)
+**StanfordModel** is a custom PyTorch architecture with two parallel arms that each process a different modality, then fuse their learned representations for a single regression output:
 
-Both arms produce embeddings that are concatenated and fed into a regression head to output a single prediction: **Paddy Yield in Tonnes/Hectare**.
+```
+Sentinel-2 Image (.tif) ──► CNN Arm ──────────┐
+                                               ├──► Concat ──► Regression Head ──► Yield (T/Ha)
+District Metadata (.csv) ──► ANN Arm ──────────┘
+```
 
 ---
 
-## 🗂️ Repository Structure
+## Architecture
+
+<details>
+<summary><strong>View full architecture diagram</strong></summary>
+
+<br/>
+
+```
+┌─────────────────────────────────┐     ┌───────────────────────────┐
+│         CNN ARM (Image)          │     │      ANN ARM (Metadata)    │
+│                                 │     │                           │
+│  Input  →  [B, 5, 224, 224]     │     │  Input  →  [B, 5]         │
+│                                 │     │                           │
+│  Conv2d(5→32)                   │     │  Linear(5→64)             │
+│  BatchNorm2d + ReLU             │     │  BatchNorm1d + ReLU       │
+│  MaxPool2d                      │     │                           │
+│           ↓                     │     │  Linear(64→128)           │
+│  Conv2d(32→64)                  │     │  BatchNorm1d + ReLU       │
+│  BatchNorm2d + ReLU             │     │                           │
+│  MaxPool2d                      │     │  Linear(128→64)           │
+│           ↓                     │     │  BatchNorm1d + ReLU       │
+│  Conv2d(64→128)                 │     │                           │
+│  BatchNorm2d + ReLU             │     │  Embedding → [B, 64]      │
+│  MaxPool2d                      │     │                           │
+│           ↓                     │     └───────────┬───────────────┘
+│  Flatten → Linear(? → 256)      │                 │
+│  Dropout                        │                 │
+│  Embedding → [B, 256]           │                 │
+└──────────────┬──────────────────┘                 │
+               │                                    │
+               └──────────── Concatenate ───────────┘
+                                  ↓
+                          [B, 256 + 64] = [B, 320]
+                                  ↓
+                       Linear(320→128) + ReLU + Dropout
+                                  ↓
+                          Linear(128→32) + ReLU
+                                  ↓
+                             Linear(32→1)
+                                  ↓
+                     Predicted Yield (Tonnes/Ha)
+```
+
+</details>
+
+| Component | Details |
+|-----------|---------|
+| **Image Arm** | 3× Conv2d blocks with BatchNorm + ReLU + MaxPool → flattened 256-d embedding |
+| **Metadata Arm** | 3× Linear blocks with BatchNorm1d + ReLU → 64-d embedding |
+| **Fusion** | Concatenation → MLP regression head → scalar output |
+| **Loss** | `MSELoss` |
+| **Optimizer** | `Adam` with LR scheduling |
+
+---
+
+## Dataset
+
+### Sentinel-2 Satellite Imagery (`.tif`)
+
+| Band | Channel | Purpose |
+|------|---------|---------|
+| B1–B3 | RGB | True-color visual context |
+| B4 | Near-Infrared (NIR) | Crop biomass & canopy density |
+| B5 | NDVI | Vegetation health — primary yield signal |
+
+### District-Level Metadata (`.csv`)
+
+| Feature | Description |
+|---------|-------------|
+| `Rainfall` | Actual rainfall (mm) |
+| `SownArea` | Area under cultivation (Ha) |
+| `GroundWater` | District groundwater levels |
+| `Latitude` | District centroid latitude |
+| `Longitude` | District centroid longitude |
+
+> Preprocessing: string comma-stripping → `StandardScaler` normalization (fit on train, applied to test)
+
+---
+
+## Results
+
+> Add your scatter plot here: `![Actual vs Predicted](assets/results.png)`
+
+| Metric | Value |
+|--------|-------|
+| Loss | `MSELoss` on held-out test set |
+| Primary Metric | `MAE` (Mean Absolute Error) |
+| Coverage | 26 AP districts · Kharif season |
+
+---
+
+## Quickstart
+
+### 1. Clone & install
+
+```bash
+git clone https://github.com/Vinith-44/multimodal-crop-yield-prediction.git
+cd multimodal-crop-yield-prediction
+pip install torch torchvision rasterio pandas numpy scikit-learn matplotlib
+```
+
+### 2. Data layout
+
+```
+data/
+├── Final_Model_Ready_Data.csv
+└── tif/
+    ├── Srikakulam_Kharif_2022.tif
+    └── ...
+model/
+└── best_yield_model.pth
+```
+
+### 3. Run inference
+
+```python
+from predict import predict_region_yield
+
+result = predict_region_yield(
+    region="Srikakulam",
+    image_path="data/tif/Srikakulam_Kharif_2022.tif"
+)
+# → 🌾 PREDICTED PADDY YIELD FOR SRIKAKULAM: 2.31 Tonnes/Hectare
+```
+
+---
+
+## Engineering Challenges
+
+<details>
+<summary><strong>Geospatial NaN border artifacts</strong></summary>
+
+Sentinel-2 images mapped to rectangular tensors contain `NaN` values at curved district boundaries. Without handling, these propagate as `nan` gradients and silently corrupt training.
+
+**Fix:** `np.nan_to_num(img, nan=0.0)` applied before normalization.
+
+</details>
+
+<details>
+<summary><strong>Raw image dimensionality mismatch</strong></summary>
+
+`.tif` files vary wildly in native resolution across districts — causing tensor shape errors like `[1, 5, 75556608]` that crash batching.
+
+**Fix:** `F.interpolate(..., size=(224, 224), mode='bilinear')` applied dynamically per sample.
+
+</details>
+
+<details>
+<summary><strong>CSV string formatting errors</strong></summary>
+
+Numeric columns contained thousands-separator commas (e.g. `"1,23,456"`), causing silent `NaN` injection after `pd.to_numeric`.
+
+**Fix:** `str.replace(',', '')` at ingestion time before type casting.
+
+</details>
+
+---
+
+## Project Structure
 
 ```
 multimodal-crop-yield-prediction/
-│
 ├── data/
-│   ├── Final_Model_Ready_Data.csv      # District-level tabular metadata
-│   └── tif/                            # Sentinel-2 .tif images per district
-│
+│   ├── Final_Model_Ready_Data.csv
+│   └── tif/
 ├── model/
-│   ├── stanford_model.py               # StanfordModel architecture definition
-│   └── best_yield_model.pth            # Saved model weights
-│
+│   ├── stanford_model.py
+│   └── best_yield_model.pth
 ├── notebooks/
-│   └── training.ipynb                  # Full training + evaluation notebook
-│
-├── predict.py                          # Inference engine
+│   └── training.ipynb
+├── predict.py
 ├── requirements.txt
 └── README.md
 ```
 
 ---
 
-## 📊 Datasets
+<div align="center">
 
-### 1. Satellite Imagery — Sentinel-2 (`.tif`)
+**Vinith Vanjangi** · [GitHub](https://github.com/Vinith-44) · [Kaggle](https://www.kaggle.com/vinithvanjangi)
 
-Each district has a corresponding multi-band GeoTIFF file capturing Kharif season vegetation:
+B.V. Raju Institute of Technology · CSE (R22) · 3rd Year
 
-| Band | Channel | Role |
-|------|---------|------|
-| B1–B3 | RGB (Red, Green, Blue) | True-color visual context |
-| B4 | NIR (Near-Infrared) | Crop biomass and canopy density |
-| B5 | NDVI | Vegetation health index — primary yield signal |
-
-**Preprocessing pipeline:**
-- Resized to `224×224` using `F.interpolate` (handles wildly varying raw sizes)
-- Normalized by dividing pixel values by `10000.0` (Sentinel-2 reflectance scale)
-- `np.nan_to_num` applied to zero out curved district border artifacts
-
-### 2. Tabular Metadata (`.csv`)
-
-Five numerical features per district per season:
-
-| Feature | Description |
-|---------|-------------|
-| `Rainfall` | Actual rainfall in mm |
-| `SownArea` | Area under cultivation (Hectares) |
-| `GroundWater` | District groundwater levels |
-| `Latitude` | District centroid latitude |
-| `Longitude` | District centroid longitude |
-
-**Preprocessing:** Comma-stripped string parsing → `StandardScaler` normalization (fit on train set, applied to test set).
-
----
-
-## 🧠 Model Architecture — `StanfordModel`
-
-```
-┌─────────────────────────────┐     ┌──────────────────────────┐
-│        IMAGE ARM (CNN)       │     │    METADATA ARM (ANN)     │
-│                             │     │                          │
-│  Input: [B, 5, 224, 224]    │     │  Input: [B, 5]           │
-│         ↓                   │     │         ↓                │
-│  Conv2D(5→32) + BN + ReLU   │     │  Linear(5→64)            │
-│  MaxPool2D                  │     │  BN1D + ReLU             │
-│         ↓                   │     │         ↓                │
-│  Conv2D(32→64) + BN + ReLU  │     │  Linear(64→128)          │
-│  MaxPool2D                  │     │  BN1D + ReLU             │
-│         ↓                   │     │         ↓                │
-│  Conv2D(64→128) + BN + ReLU │     │  Linear(128→64)          │
-│  MaxPool2D                  │     │  BN1D + ReLU             │
-│         ↓                   │     │         ↓                │
-│  Flatten → Linear → Dropout │     │  Embedding: [B, 64]      │
-│  Embedding: [B, 256]        │     │                          │
-└────────────┬────────────────┘     └─────────────┬────────────┘
-             │                                    │
-             └──────────── Concat ────────────────┘
-                               ↓
-                    [B, 256 + 64] = [B, 320]
-                               ↓
-                    Linear(320→128) + ReLU + Dropout
-                               ↓
-                    Linear(128→32) + ReLU
-                               ↓
-                    Linear(32→1)
-                               ↓
-                  Predicted Yield (Tonnes/Ha)
-```
-
-**Training setup:**
-- Loss: `MSELoss`
-- Optimizer: `Adam` with learning rate scheduling
-- Metric: `MAE` on held-out test set
-- Best weights saved via checkpoint callback
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-```bash
-pip install torch torchvision rasterio pandas numpy scikit-learn matplotlib
-```
-
-Or install from requirements file:
-```bash
-pip install -r requirements.txt
-```
-
-### Running Inference
-
-```python
-from predict import predict_region_yield
-
-# Single district prediction
-result = predict_region_yield(
-    region="Srikakulam",
-    image_path="data/tif/Srikakulam_Kharif_2022.tif"
-)
-
-# → 🌾 PREDICTED PADDY YIELD FOR SRIKAKULAM: 2.31 Tonnes/Hectare
-```
-
-The inference engine automatically handles:
-- Dynamic image resizing to `224×224`
-- NaN border artifact removal
-- Feature scaling using the saved `StandardScaler`
-
----
-
-## ⚠️ Engineering Challenges
-
-**1. Geospatial NaN Artifacts**
-Satellite images mapped onto rectangular tensors contain `NaN` values at curved district borders. Without handling, these propagate as `nan` gradients and silently corrupt both training and inference. Fixed with `np.nan_to_num(img, nan=0.0)` as a pre-normalization defense step.
-
-**2. Raw Image Dimensionality**
-`.tif` files from different districts can have wildly different native resolutions, causing tensor shape mismatches (e.g., `[1, 5, 75556608]`). Fixed with `F.interpolate(..., size=(224, 224), mode='bilinear')` applied dynamically per sample before batching.
-
-**3. CSV String Formatting**
-Numeric fields in the raw CSV contained thousands-separator commas (e.g., `"1,23,456"`), causing silent `NaN` injection after `pd.to_numeric`. Fixed with `str.replace(',', '')` at ingestion time.
-
----
-
-## 📍 Coverage
-
-26 districts of Andhra Pradesh, India — spanning the full Kharif (monsoon) paddy season.
-
----
-
-## 🤝 Acknowledgements
-
-- Satellite data from [Sentinel-2](https://sentinel.esa.int/web/sentinel/missions/sentinel-2) (ESA Copernicus Programme)
-- Agricultural statistics from Andhra Pradesh district crop survey records
-- Architecture inspired by remote sensing fusion research in agricultural AI
-
----
-
-## 👤 Author
-
-**Vinith Vanjangi** — [@Vinith-44](https://github.com/Vinith-44) | [Kaggle](https://www.kaggle.com/vinithvanjangi)
-
-B.V. Raju Institute of Technology, Narsapur · CSE (R22) · 3rd Year
+</div>
