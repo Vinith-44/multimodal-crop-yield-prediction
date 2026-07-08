@@ -54,12 +54,24 @@ multimodal-crop-yield-prediction/
 │   └── best_yield_model.pth             # Saved best model weights
 │
 ├── notebooks/
-│   └── training.ipynb                   # Full training + evaluation notebook
+│   └── kharif_paddy_yield_prediction.ipynb   # Full training + evaluation notebook
 │
 ├── predict.py                           # Inference engine
 ├── requirements.txt
 └── README.md
 ```
+
+---
+
+## ☁️ Data Access
+
+All large files are hosted on Google Drive. Download them and place in the directories shown below:
+
+| File | Description | Download |
+|------|-------------|----------|
+| `data/tif/` | Sentinel-2 satellite `.tif` images for all 26 AP districts (collected via Google Earth Engine) | [📁 Download Folder](https://drive.google.com/drive/folders/11hZyXxg1hvqOLCvbLQy5pYCyIzOIIazF?usp=drive_link) |
+| `data/Final_Model_Ready_Data.csv` | Final merged dataset — yield labels + all tabular features | [📄 Download CSV](https://drive.google.com/file/d/1TS0Ra8kEfyKAB4BYtMpwv6JTp2M3IXNE/view?usp=drive_link) |
+| `model/best_yield_model.pth` | Best trained StanfordModel weights | [🧠 Download Weights](https://drive.google.com/file/d/1l_cV6-hQJLHjkC9Q4iBKpB5un80EFmr9/view?usp=drive_link) |
 
 ---
 
@@ -100,7 +112,7 @@ Five numerical features per district per season:
 
 ```
 ┌──────────────────────────────────┐     ┌──────────────────────────────┐
-│          CNN ARM (Image)         │     │       ANN ARM (Metadata)     │
+│          CNN ARM (Image)          │     │       ANN ARM (Metadata)      │
 │                                  │     │                              │
 │   Input: [B, 5, 224, 224]        │     │   Input: [B, 5]              │
 │            ↓                     │     │            ↓                 │
@@ -224,6 +236,6 @@ Numeric columns in the raw dataset contained thousands-separator commas (e.g., `
 
 **Vinith Vanjangi** · [GitHub @Vinith-44](https://github.com/Vinith-44) · [Kaggle](https://www.kaggle.com/vinithvanjangi)
 
-*B.V. Raju Institute of Technology ·
+*B.V. Raju Institute of Technology · CSE (R22) · 3rd Year*
 
 </div>
