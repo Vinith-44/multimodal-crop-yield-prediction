@@ -100,7 +100,7 @@ Five numerical features per district per season:
 
 ```
 ┌──────────────────────────────────┐     ┌──────────────────────────────┐
-│          CNN ARM (Image)          │     │       ANN ARM (Metadata)      │
+│          CNN ARM (Image)         │     │       ANN ARM (Metadata)     │
 │                                  │     │                              │
 │   Input: [B, 5, 224, 224]        │     │   Input: [B, 5]              │
 │            ↓                     │     │            ↓                 │
@@ -224,6 +224,6 @@ Numeric columns in the raw dataset contained thousands-separator commas (e.g., `
 
 **Vinith Vanjangi** · [GitHub @Vinith-44](https://github.com/Vinith-44) · [Kaggle](https://www.kaggle.com/vinithvanjangi)
 
-*B.V. Raju Institute of Technology · CSE (R22) · 3rd Year*
+*B.V. Raju Institute of Technology ·
 
 </div>
