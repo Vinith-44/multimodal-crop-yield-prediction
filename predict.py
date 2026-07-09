@@ -1,18 +1,15 @@
 """
 predict.py — Inference Engine for StanfordModel
 ================================================
-Loads a trained StanfordModel and predicts paddy yield for a given district.
-
 Usage (Python):
-    from predict import predict_yield
-    result = predict_yield(district="Srikakulam", tif_path="data/tif/Srikakulam_Kharif_2022.tif")
+    from predict import predict_region_yield
+    result = predict_region_yield("Srikakulam", "data/tif/Srikakulam_Kharif_2022.tif")
 
 Usage (CLI):
     python predict.py --district Srikakulam --tif data/tif/Srikakulam_Kharif_2022.tif
 """
 
 import argparse
-
 import numpy as np
 import pandas as pd
 import rasterio
@@ -26,13 +23,7 @@ from stanford_model import StanfordModel
 MODEL_PATH = "model/best_yield_model.pth"
 CSV_PATH   = "data/Final_Model_Ready_Data.csv"
 IMG_SIZE   = 224
-META_COLS  = [
-    'Actual_mm',
-    'GW_4_23_01',
-    'RiseFall_4_23_01',
-    'Actual (Ha)',
-    'Deviation_percent',
-]
+META_COLS  = ['Rainfall', 'SownArea', 'GroundWater', 'Latitude', 'Longitude']
 # ─────────────────────────────────────────────────────────────────────────────
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -48,61 +39,67 @@ def _load_model() -> StanfordModel:
 def _load_image(tif_path: str) -> torch.Tensor:
     """Read a 5-band .tif, resize to 224×224, normalize, return [1, 5, 224, 224]."""
     with rasterio.open(tif_path) as src:
-        img = src.read().astype("float32")  # [5, H, W]
+        img = src.read().astype("float32")          # [5, H, W]
 
-    img = np.nan_to_num(img, nan=0.0)       # Zero out border NaN artifacts
-    img /= 10000.0                           # DN → reflectance (bands 1-4)
+    img = np.nan_to_num(img, nan=0.0, posinf=0.0, neginf=0.0)  # zero NaN border artifacts
+    if img.shape[0] >= 4:
+        img[:4] /= 10000.0                          # DN → reflectance for RGB+NIR
 
-    tensor = torch.from_numpy(img).unsqueeze(0)  # [1, 5, H, W]
+    tensor = torch.from_numpy(img).unsqueeze(0)     # [1, 5, H, W]
     tensor = F.interpolate(tensor, size=(IMG_SIZE, IMG_SIZE), mode="bilinear", align_corners=False)
     return tensor.to(device)
 
 
-def _load_metadata(district: str, csv_path: str = CSV_PATH) -> torch.Tensor:
-    """Fetch district row from CSV, scale, return [1, 5] tensor."""
-    df = pd.read_csv(csv_path, thousands=",")
+def _load_metadata(district: str) -> torch.Tensor:
+    """Fetch district row from CSV, scale metadata, return [1, 5] tensor."""
+    df = pd.read_csv(CSV_PATH, thousands=",")
 
-    # Try common district column names
-    for col in ["District", "District_Name", "Dist Name", "district_name"]:
-        if col in df.columns:
-            row = df[df[col].str.strip().str.title() == district.strip().title()]
-            if not row.empty:
-                break
-    else:
-        raise ValueError(f"District '{district}' not found in {csv_path}.")
+    # Force numeric in case any commas slipped through
+    for col in META_COLS:
+        if df[col].dtype == object:
+            df[col] = df[col].astype(str).str.replace(",", "").astype(float)
 
     scaler = StandardScaler()
     scaler.fit(df[META_COLS].fillna(0))
 
-    meta = scaler.transform(row[META_COLS].fillna(0).values).astype("float32")
+    row = df[df["District"].str.contains(district, case=False, na=False)]
+    if row.empty:
+        raise ValueError(f"District '{district}' not found in {CSV_PATH}.")
+
+    meta = scaler.transform(row.iloc[[0]][META_COLS].astype(float).fillna(0))
+    meta = np.nan_to_num(meta, nan=0.0, posinf=0.0, neginf=0.0).astype("float32")
     return torch.from_numpy(meta).to(device)
 
 
-def predict_yield(district: str, tif_path: str) -> float:
+def predict_region_yield(region_name: str, tif_image_path: str) -> str:
     """
     Predict paddy yield for a district.
 
     Args:
-        district  : District name (e.g. "Srikakulam")
-        tif_path  : Path to the district's Sentinel-2 .tif image
+        region_name     : District name (e.g. "Srikakulam")
+        tif_image_path  : Path to the district's Sentinel-2 .tif image
 
     Returns:
-        Predicted yield in Tonnes/Hectare (float)
+        Result string with predicted yield in Tonnes/Hectare
     """
+    print(f"\n🌾 Analyzing data for region: {region_name}...")
     model  = _load_model()
-    img    = _load_image(tif_path)
-    meta   = _load_metadata(district)
+    img    = _load_image(tif_image_path)
+    meta   = _load_metadata(region_name)
 
     with torch.no_grad():
-        pred = model(img, meta).item()
+        prediction = model(img, meta).item()
 
-    print(f"\n🌾 PREDICTED PADDY YIELD FOR {district.upper()}: {pred:.4f} Tonnes/Hectare\n")
-    return pred
+    result = f"🚀 PREDICTED PADDY YIELD FOR {region_name.upper()}: {prediction:.4f} Tonnes/Hectare"
+    print("-" * 65)
+    print(result)
+    print("-" * 65)
+    return result
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="StanfordModel Inference")
-    parser.add_argument("--district", required=True, help="District name (e.g. Srikakulam)")
-    parser.add_argument("--tif",      required=True, help="Path to the district .tif image")
+    parser.add_argument("--district", required=True, help="District name e.g. Srikakulam")
+    parser.add_argument("--tif",      required=True, help="Path to district .tif image")
     args = parser.parse_args()
-    predict_yield(args.district, args.tif)
+    predict_region_yield(args.district, args.tif)
