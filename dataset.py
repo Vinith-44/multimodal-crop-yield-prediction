@@ -1,10 +1,8 @@
 """
 StanfordDataset — PyTorch Dataset for Multimodal Paddy Yield Prediction
 ========================================================================
-Loads:
-  - 5-band .npy tile images (pre-cropped from Sentinel-2 .tif files)
-  - Tabular district metadata from Final_Model_Ready_Data.csv
-  - Yield labels (Tonnes/Hectare)
+Loads 5-band .npy tile images + tabular district metadata from
+Final_Model_Ready_Data.csv and returns (image, metadata, yield) tuples.
 """
 
 import numpy as np
@@ -14,27 +12,25 @@ from torch.utils.data import Dataset
 from sklearn.preprocessing import StandardScaler
 
 
-META_COLS = [
-    'Actual_mm',          # Rainfall (mm)
-    'GW_4_23_01',         # Groundwater level
-    'RiseFall_4_23_01',   # Groundwater trend
-    'Actual (Ha)',        # Sown area (hectares)
-    'Deviation_percent',  # Rainfall deviation from normal
-]
+META_COLS = ['Rainfall', 'SownArea', 'GroundWater', 'Latitude', 'Longitude']
 
 
 class StanfordDataset(Dataset):
     """
     Args:
-        df               (pd.DataFrame): Rows with 'tile_path', META_COLS, 'Yield_Tonne_per_Hectare'
-        metadata_scaler  (StandardScaler, optional): Pre-fit scaler. If None, fits on this dataset.
-                         Always pass the train-set scaler when creating val/test datasets.
+        df               : DataFrame with columns: tile_path, META_COLS, Yield_Tonne_per_Hectare
+        metadata_scaler  : Pre-fit StandardScaler. If None, fits on this dataset.
+                           Always pass the train scaler when creating val/test sets.
     """
 
     def __init__(self, df: pd.DataFrame, metadata_scaler=None):
         self.df = df.reset_index(drop=True)
 
-        # Fit or reuse scaler
+        # Force numeric — handles stray comma-formatted strings
+        for col in META_COLS:
+            if self.df[col].dtype == object:
+                self.df[col] = self.df[col].astype(str).str.replace(",", "").astype(float)
+
         if metadata_scaler is None:
             self.scaler = StandardScaler()
             self.scaler.fit(self.df[META_COLS].fillna(0))
@@ -43,22 +39,20 @@ class StanfordDataset(Dataset):
 
         self.meta_data = self.scaler.transform(
             self.df[META_COLS].fillna(0).values
-        ).astype('float32')
+        ).astype("float32")
 
-        self.paths  = self.df['tile_path'].values
-        self.yields = self.df['Yield_Tonne_per_Hectare'].values.astype('float32')
+        self.paths  = self.df["tile_path"].values
+        self.yields = self.df["Yield_Tonne_per_Hectare"].values.astype("float32")
 
     def __len__(self):
         return len(self.df)
 
     def __getitem__(self, idx):
-        # Load pre-cropped .npy tile — shape [5, 224, 224]
         try:
-            img = np.load(self.paths[idx]).astype('float32')
-            img[:4] /= 10000.0  # Normalize RGB+NIR from DN range (0-10000) to (0-1)
-            # Band 5 (NDVI) is already in [-1, 1], leave unchanged
+            img = np.load(self.paths[idx]).astype("float32")  # [5, 224, 224]
+            img[:4] /= 10000.0   # Normalize RGB+NIR; NDVI (band 5) already in [-1, 1]
         except Exception:
-            img = np.zeros((5, 224, 224), dtype='float32')
+            img = np.zeros((5, 224, 224), dtype="float32")
 
         return (
             torch.from_numpy(img),
